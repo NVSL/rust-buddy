@@ -130,6 +130,7 @@ impl BuddyAllocator {
                     } else {
                         self.buddies[idx] = None;
                     }
+                    self.available -= len;
                     self.free(off, len << 1);
                     return;
                 }
