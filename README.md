@@ -67,5 +67,42 @@ To **free** the object, the allocator tries to put the allocation (`v1` at 0..12
 Available = 1024 bytes
 ```
 
+## Another Example
+Just for fun, let's play with the allocator. We first allocate 7 objects with sizes of 5, 1, 3, 8, 7, 1, and 2 bytes. The we start removing them in a random order. The final shape of free-lists should be exactly similar to its initial shape (which is).
+
+```
+     1 [ 0]             v1:    0..4    (5 bytes)        1 [ 0]   
+     2 [ 1]             v2:    8..8    (1 bytes)        2 [ 1]   
+     4 [ 2]             v3:   12..14   (3 bytes)        4 [ 2]   
+     8 [ 3]         =>  v4:   16..23   (8 bytes) =>     8 [ 3]   
+    16 [ 4]             v5:   24..30   (7 bytes)       16 [ 4]   
+    32 [ 5] (0..31)     v6:    9..9    (1 bytes)       32 [ 5]   
+Available = 32 bytes    v7:   10..11   (2 bytes)   Available = 0 bytes
+
+           1 [ 0]                   1 [ 0] (9..9)            1 [ 0] (9..9)  
+           2 [ 1]                   2 [ 1]                   2 [ 1]         
+ free(v5)  4 [ 2]          free(v6) 4 [ 2]          free(v1) 4 [ 2]         
+ ========> 8 [ 3] (24..31) =======> 8 [ 3] (24..31) =======> 8 [ 3] (24..31)
+          16 [ 4]                  16 [ 4]                  16 [ 4]         
+          32 [ 5]                  32 [ 5]                  32 [ 5]         
+      Available = 8 bytes      Available = 9 bytes      Available = 9 bytes 
+
+          1 [ 0] (9..9)                  1 [ 0]                         1 [ 0]         
+          2 [ 1] (10..11)                2 [ 1]                         2 [ 1]         
+ free(v7) 4 [ 2]                free(v2) 4 [ 2] (8..11)        free(v4) 4 [ 2] (8..11) 
+ =======> 8 [ 3] (0..7)(24..31) =======> 8 [ 3] (0..7)(24..31) =======> 8 [ 3] (0..7)  
+         16 [ 4]                        16 [ 4]                        16 [ 4] (16..31)
+         32 [ 5]                        32 [ 5]                        32 [ 5]         
+     Available = 19 bytes           Available = 20 bytes            Available = 28 bytes
+ 
+          1 [ 0]
+          2 [ 1]
+ free(v3) 4 [ 2]
+ =======> 8 [ 3]
+         16 [ 4]
+         32 [ 5] (0..31)
+     Available = 32 bytes
+```
+
 Enjoy!
 
