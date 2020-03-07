@@ -50,7 +50,7 @@ Variables:
       v1:    0..99   (100 bytes)
 ```
 
-To **free** the object, the allocator tries to put the allocation (`v1` at 0..127) back to its place at list 7. However, it seems that releasing memory has a buddy block (128..256). So, it merges them to make a larger free block of 256 bytes and tries to put it in list 8. It reiterations the same steps until it can't. Now, we have a giant 1024-byte free block, again.
+To **free** the object, the allocator tries to put the allocation (`v1` at 0..127) back to its place at list 7. However, it seems that releasing memory has a buddy block (128..256). So, it merges them to make a larger free block of 256 bytes and tries to put it in list 8. It reiterates the same steps until it can't. Now, we have a giant 1024-byte free block, again.
 
 ```
      1 [ 0]
