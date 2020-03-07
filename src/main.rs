@@ -51,16 +51,7 @@ impl BuddyAllocator {
         })));
         println!("Memory is initiated with {} bytes", self.size);
     }
-    fn apply(&mut self, to_rem: &mut Vec<usize>, to_add: &mut Vec<(usize, pptr)>) {
-        for b in to_rem {
-            let d = self.buddies[*b].as_ref().unwrap();
-            let nxt = if let Some(pn) = &d.borrow().next {
-                Some(pn.clone())
-            } else {
-                None
-            };
-            self.buddies[*b] = nxt;
-        }
+    fn apply(&mut self, to_add: &mut Vec<(usize, pptr)>) {
         for b in to_add {
             let n = if let Some(d) = &self.buddies[b.0] {
                 Buddy {
@@ -77,7 +68,6 @@ impl BuddyAllocator {
         }
     }
     fn find_free_memory(&mut self, idx: usize, 
-        to_rem: &mut Vec<usize>, 
         to_add: &mut Vec<(usize, pptr)>, 
         lend: bool) 
     -> Option<pptr> {
@@ -85,11 +75,11 @@ impl BuddyAllocator {
             None
         } else {
             let res;
-            if let Some(b) = self.buddies[idx].as_ref() {
-                to_rem.push(idx);
+            if let Some(b) = self.buddies[idx].clone() {
+                self.buddies[idx] = b.borrow().next.clone();
                 res = b.borrow().off;
             } else {
-                res = self.find_free_memory(idx+1, to_rem, to_add, true)?;
+                res = self.find_free_memory(idx+1, to_add, true)?;
             }
             if idx > 0 && lend {
                 to_add.push((idx-1, res + (1 << (idx-1))));
@@ -98,15 +88,14 @@ impl BuddyAllocator {
         }
     }
     pub fn alloc(&mut self, len: usize) -> Result<pptr, &str> {
-        let mut to_rem = vec!();
         let mut to_add = vec!();
         let idx = get_idx(len);
-        match self.find_free_memory(idx, &mut to_rem, &mut to_add, false) {
+        match self.find_free_memory(idx, &mut to_add, false) {
             Some(res) => {
                 if res >= self.size {
                     Err("Out of memory")
                 } else {
-                    self.apply(&mut to_rem, &mut to_add);
+                    self.apply(&mut to_add);
                     self.available -= 1 << idx;
                     Ok(res)
                 }
@@ -123,23 +112,20 @@ impl BuddyAllocator {
             let mut prev: Weak<RefCell<Buddy>> = Weak::new();
             while let Some(b) = curr {
                 let e = b.borrow();
-                if e.off == end || e.off + len == off  {
+                let is_left_buddy = off & (1 << idx) == 0;
+                if (e.off == end && is_left_buddy) || (e.off + len == off && !is_left_buddy)  {
                     let off = pptr::min(off,e.off);
                     if let Some(p) = prev.upgrade() {
                         p.borrow_mut().next = e.next.clone();
                     } else {
-                        self.buddies[idx] = None;
+                        self.buddies[idx] = e.next.clone();
                     }
                     self.available -= len;
                     self.free(off, len << 1);
                     return;
                 }
                 prev = Rc::downgrade(&b);
-                curr = if let Some(nxt) = &e.next {
-                    Some(nxt.clone())
-                } else {
-                    None
-                };
+                curr = e.next.clone();
             }
         }
         self.available += len;
@@ -163,7 +149,7 @@ impl BuddyAllocator {
             let mut curr = self.buddies[idx].clone();
             while let Some(b) = curr {
                 let b = b.borrow();
-                print!("({}..{})", b.off, b.off + (1 << idx));
+                print!("({}..{})", b.off, b.off + (1 << idx) - 1);
                 curr = if let Some(nxt) = b.next.clone() {
                     Some(nxt)
                 } else {
