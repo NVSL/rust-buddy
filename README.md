@@ -31,7 +31,7 @@ Let's assume that we have a memory of size 1024 bytes. Initially, there is only 
 Available = 1024 bytes
 ```
 
-To **allocate** a new object of `v1` with the size of 100 bytes. In the Buddy allocation algorithm, the object will allocate the upper nearest power of 2 bytes, which is 128 bytes in this case. Since there is no free block of 128 bytes available in list 7 (2^7), the allocator checks its neighbor list to see if there is any block of size 256 (2^8). If so, it splits it into two 128-byte blocks and uses one of them. If not, it reiterates the checking until either finds it of fails. In this case, it splits 1024 into two 512, then splits the first 512 into two 256, and finally it breaks one of 256 blocks and uses one of them. The free-lists are now like this:
+Let's **allocate** a new object of `v1` with the size of 100 bytes. In the Buddy allocation algorithm, the object will occupy a piece of memory with the size of the upper nearest power of 2 bytes, which is 128 bytes in this case. Since there is no free block of 128 bytes available in list 7 (2^7), the allocator checks its neighbor list to see if there is any block of size 256 (2^8). If so, it splits it into two 128-byte blocks and uses one of them. If not, it reiterates the checking until either finds it of fails. In this case, it splits 1024 into two 512, then splits the first 512 into two 256, and finally it breaks one of 256 blocks and uses one of them. The free-lists are now like this:
 
 ```
      1 [ 0]
