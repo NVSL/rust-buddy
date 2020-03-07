@@ -78,14 +78,14 @@ Just for fun, let's play with the allocator. We first allocate 7 objects with si
     16 [ 4]             v5:   24..30   (7 bytes)       16 [ 4]   
     32 [ 5] (0..31)     v6:    9..9    (1 bytes)       32 [ 5]   
 Available = 32 bytes    v7:   10..11   (2 bytes)   Available = 0 bytes
-
-           1 [ 0]                   1 [ 0] (9..9)            1 [ 0] (9..9)  
-           2 [ 1]                   2 [ 1]                   2 [ 1]         
- free(v5)  4 [ 2]          free(v6) 4 [ 2]          free(v1) 4 [ 2]         
- ========> 8 [ 3] (24..31) =======> 8 [ 3] (24..31) =======> 8 [ 3] (0..7)(24..31)
-          16 [ 4]                  16 [ 4]                  16 [ 4]         
-          32 [ 5]                  32 [ 5]                  32 [ 5]         
-      Available = 8 bytes      Available = 9 bytes      Available = 9 bytes 
+														      
+          1 [ 0]                         1 [ 0] (9..9)                  1 [ 0] (9..9)  
+          2 [ 1]                         2 [ 1]                         2 [ 1]         
+ free(v5) 4 [ 2]                free(v6) 4 [ 2]                free(v1) 4 [ 2]         
+ =======> 8 [ 3] (24..31)       =======> 8 [ 3] (24..31)       =======> 8 [ 3] (0..7)(24..31)
+         16 [ 4]                        16 [ 4]                        16 [ 4]         
+         32 [ 5]                        32 [ 5]                        32 [ 5]         
+     Available = 8 bytes            Available = 9 bytes            Available = 9 bytes 
 
           1 [ 0] (9..9)                  1 [ 0]                         1 [ 0]         
           2 [ 1] (10..11)                2 [ 1]                         2 [ 1]         
