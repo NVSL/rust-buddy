@@ -1,17 +1,20 @@
 # Buddy Memory Allocation
 This repository contains the implementation of a simple [Buddy Memory Allocator](https://en.wikipedia.org/wiki/Buddy_memory_allocation). 
-The primary data structure [BuddyAllocator](src/main.rs#L16) contains 32 lists of [Buddy](src/main.rs#L11) objects, each of which maintains an address of free memory block of size 2^i.
+The primary data structure [BuddyAllocator](src/main.rs#L53) contains 32 lists of [Buddy](src/main.rs#L16) objects, each of which maintains an address of free memory block of size 2^i.
 
 ```rust
 struct BuddyAllocator {
-    buddies: [Option<Rc<RefCell<Buddy>>>; 32], // Free-lists
-    available: usize,                          // Total available memory
-    size: usize,                               // Total size of the memory
-    last: usize                                // Index of the last free-list which may be used
+    buddies: [Option<pptr>; 32], // Free-lists
+    available: usize,            // Total available memory
+    size: usize,                 // Total size of the memory
+    last: usize                  // Index of the last free-list which may be used
 }
 ```
 
 You are given a bunch of options to operate on the memory, and you can see the free-lists, available space, and the allocated objects by choosing the `print` option. 
+
+## Self-Allocation
+In this branch, I use a memory mapped file to emulate memory (or NVM). The difference between this branch and `master` branch is that here we use the same memory device to keep the meta-data information, including the linked list which is an 8-byte pointer to the next buddy block. Therefore, the smalles memory block for allocation is 16 bytes, 8 bytes for metadata, and 8 bytes for data.
 
 ## Example
 Let's assume that we have a memory of size 1024 bytes. Initially, there is only one giant block of 1024 bytes. The free-lists look like this:

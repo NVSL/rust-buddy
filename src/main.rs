@@ -1,26 +1,65 @@
 #![allow(dead_code)]
 #![allow(unused_must_use)]
+#![feature(assoc_int_consts)]
+#![feature(untagged_unions)]
 
-use std::cell::RefCell;
-use std::rc::{Rc,Weak};
+use std::mem;
 
 #[allow(non_camel_case_types)]
 type pptr = usize;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
+/// Buddy memory block
+/// Each memory block has some meta-data information in form of `Buddy` data 
+/// structure. It has a pointer to the next buddy block, if there is any. It 
+/// also keeps a log of the next pointer for atomic operations.
 struct Buddy {
-    off: pptr,
-    next: Option<Rc<RefCell<Buddy>>>
+    /// Next pointer
+    /// We assume that usize::MAX is NULL
+    next: pptr,
 }
 
+const META_SIZE: usize = mem::size_of::<Buddy>();
+
+#[inline]
+fn is_null(p: pptr) -> bool {
+    p == usize::MAX
+}
+
+#[inline]
+fn pptr_to_option(p: pptr) -> Option<pptr> {
+    if is_null(p) { None } else { Some(p) }
+}
+
+#[inline]
+fn option_to_pptr(p: Option<pptr>) -> pptr {
+    if let Some(p) = p { p } else { usize::MAX }
+}
+
+/// Buddy Memory Allocator
+/// It contains 60 free-lists of available buddy blocks to keep at most 2^64
+/// bytes including meta-data information. A free-list k keeps all available 
+/// memory blocks of size 2^k bytes plus an extra information for `Buddy` 
+/// struct. Assuming that `Buddy` has a size of 8 bytes, the shape of lists 
+/// can be like this:
+/// 
+///   [16]: [8|8] -> [8|8]
+///   [32]: [8|24] -> [8|24] -> [8|24]
+///   [64]: [8|56]
+///   ...
+/// 
+/// The first 8 bytes of each block is meta-data. The rest is the actual 
+/// memory handed to the user.
 struct BuddyAllocator {
-    buddies: [Option<Rc<RefCell<Buddy>>>; 32],
+    buddies: [Option<pptr>; 64],
     available: usize,
     size: usize,
-    last: usize
+    commited: bool,
+    last_idx: usize,
+    raw_offset: pptr
 }
 
-const fn num_bits<T>() -> u32 { (std::mem::size_of::<T>() << 3) as u32 }
+const fn num_bits<T>() -> u32 { (mem::size_of::<T>() << 3) as u32 }
 
 #[inline]
 fn get_idx(x: usize) -> usize {
@@ -28,142 +67,148 @@ fn get_idx(x: usize) -> usize {
     (num_bits::<usize>() - (x-1).leading_zeros()) as usize
 }
 
+fn deref(base: pptr, off: pptr) -> &'static mut Buddy {
+    union U<'a> {
+        off: pptr,
+        obj: &'a mut Buddy
+    }
+    let u = U {off: base + off};
+    unsafe { u.obj }
+}
+
 impl BuddyAllocator {
     pub fn new() -> Self {
         BuddyAllocator {
-            buddies: Default::default(),
+            buddies: [None; 64],
             available: 0,
             size: 0,
-            last: 0
+            commited: true,
+            last_idx: 0,
+            raw_offset: 0
         }
     }
-    pub fn init(&mut self, size: usize) {
+    pub fn init(&mut self, size: usize, offset: pptr) {
         let mut idx = get_idx(size);
         if 1 << idx > size {
             idx -= 1;
         }
-        self.last = usize::min(idx + 1, 31);
-        self.available = 1 << idx;
-        self.size = self.available;
-        self.buddies[idx] = Some(Rc::new(RefCell::new(Buddy{
-            off: 0,
-            next: None
-        })));
+        self.buddies = [None; 64];
+        self.size = 1 << idx;
+        self.available = self.size - META_SIZE;
+        self.buddies[idx] = Some(0);
+        self.last_idx = idx;
+        self.commited = true;
+        self.raw_offset = offset;
+        let b = deref(offset, 0);
+        b.next = usize::MAX;
         println!("Memory is initiated with {} bytes", self.size);
     }
     fn apply(&mut self, to_add: &mut Vec<(usize, pptr)>) {
         for b in to_add {
-            let n = if let Some(d) = &self.buddies[b.0] {
-                Buddy {
-                    off: b.1,
-                    next: Some(d.clone())
-                }
-            } else {
-                Buddy{
-                    off: b.1,
-                    next: None
-                }
-            };
-            self.buddies[b.0] = Some(Rc::new(RefCell::new(n)));
+            let n = deref(self.raw_offset, b.1);
+            n.next = option_to_pptr(self.buddies[b.0]);
+            self.buddies[b.0] = Some(b.1);
         }
     }
     fn find_free_memory(&mut self, idx: usize, 
         to_add: &mut Vec<(usize, pptr)>, 
-        lend: bool) 
+        split: bool) 
     -> Option<pptr> {
-        if idx == 32 {
+        if idx > self.last_idx {
             None
         } else {
             let res;
             if let Some(b) = self.buddies[idx].clone() {
-                self.buddies[idx] = b.borrow().next.clone();
-                res = b.borrow().off;
+                // Remove the available block and return it
+                let buddy = deref(self.raw_offset, b);
+                self.buddies[idx] = pptr_to_option(buddy.next);
+                res = b;
             } else {
                 res = self.find_free_memory(idx+1, to_add, true)?;
             }
-            if idx > 0 && lend {
+            if idx > 0 && split {
                 to_add.push((idx-1, res + (1 << (idx-1))));
             }
             Some(res)
         }
     }
+
+    /// Allocate new memory block
     pub fn alloc(&mut self, len: usize) -> Result<pptr, &str> {
         let mut to_add = vec!();
-        let idx = get_idx(len);
+        let idx = get_idx(len + META_SIZE);
+        if self.commited { self.tx_begin(); }
         match self.find_free_memory(idx, &mut to_add, false) {
             Some(res) => {
-                if res >= self.size {
-                    Err("Out of memory")
-                } else {
-                    self.apply(&mut to_add);
-                    self.available -= 1 << idx;
-                    Ok(res)
-                }
+                self.apply(&mut to_add);
+                self.available -= 1 << idx;
+                Ok(res + META_SIZE)
             }
             None => Err("Out of memory")
         }
     }
-    pub fn free(&mut self, off: pptr, len: usize) {
+
+    fn __free(&mut self, off: pptr, len: usize) {
         let idx = get_idx(len);
-        let len = 1 << idx;
-        let end = off + len;
-        if idx+1 <= self.last {
+        let end = off + (1 << idx);
+        if self.commited { self.tx_begin(); }
+        if idx+1 <= self.last_idx {
             let mut curr = self.buddies[idx].clone();
-            let mut prev: Weak<RefCell<Buddy>> = Weak::new();
+            let mut prev: Option<pptr> = None;
             while let Some(b) = curr {
-                let e = b.borrow();
-                let is_left_buddy = off & (1 << idx) == 0;
-                if (e.off == end && is_left_buddy) || (e.off + len == off && !is_left_buddy)  {
-                    let off = pptr::min(off,e.off);
-                    if let Some(p) = prev.upgrade() {
-                        p.borrow_mut().next = e.next.clone();
+                let e = deref(self.raw_offset, b);
+                let on_left = off & (1 << idx) == 0;
+                if (b == end && on_left) || (b + len == off && !on_left)  {
+                    let off = pptr::min(off, b);
+                    if let Some(p) = prev {
+                        let p = deref(self.raw_offset, p);
+                        p.next = e.next;
                     } else {
-                        self.buddies[idx] = e.next.clone();
+                        self.buddies[idx] = pptr_to_option(e.next);
                     }
                     self.available -= len;
-                    self.free(off, len << 1);
+                    self.__free(off, len << 1);
                     return;
                 }
-                prev = Rc::downgrade(&b);
-                curr = e.next.clone();
+                prev = Some(b);
+                curr = pptr_to_option(e.next);
             }
         }
+        let e = deref(self.raw_offset, off);
+        e.next = option_to_pptr(self.buddies[idx]);
         self.available += len;
-        let n = if let Some(d) = &self.buddies[idx] {
-            Buddy {
-                off,
-                next: Some(d.clone())
-            }
-        } else {
-            Buddy{
-                off,
-                next: None
-            }
-        };
-        self.buddies[idx] = Some(Rc::new(RefCell::new(n)));
+        self.buddies[idx] = Some(off);
+    }
+
+    /// Free memory block
+    pub fn free(&mut self, off: pptr, len: usize) {
+        let idx = get_idx(len + META_SIZE);
+        let len = 1 << idx;
+        let off = off - META_SIZE;
+        self.available += META_SIZE;
+        self.__free(off, len);
+        self.available -= META_SIZE;
+    }
+    pub fn tx_begin(&mut self) {
+        self.commited = false;
+    }
+    pub fn tx_end(&mut self) {
+        self.commited = true;
     }
     pub fn print(&self) {
         println!();
-        for idx in 0..self.last {
+        for idx in 4..self.last_idx+1 {
             print!("{:>6} [{:>2}] ", 1 << idx, idx);
             let mut curr = self.buddies[idx].clone();
             while let Some(b) = curr {
-                let b = b.borrow();
-                print!("({}..{})", b.off, b.off + (1 << idx) - 1);
-                curr = if let Some(nxt) = b.next.clone() {
-                    Some(nxt)
-                } else {
-                    None
-                };
+                print!("({}..{})", b, b + (1 << idx) - 1);
+                let e = deref(self.raw_offset, b);
+                curr = pptr_to_option(e.next);
             }
             println!();
         }
         println!("Available = {} bytes", self.available);
     }
-}
-
-fn print_help() {
-    println!("Usage: ");
 }
 
 fn input(print_options: bool, msg: &str) -> Option<String> {
@@ -196,11 +241,23 @@ fn input(print_options: bool, msg: &str) -> Option<String> {
 fn main() {
     use std::collections::HashMap;
 
-    let mut id = 0;
+    use std::path::PathBuf;
+    use std::fs::OpenOptions;
+    let filename = "image";
+    let path = PathBuf::from(filename);
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&path)
+        .unwrap();
+    file.set_len(1024*1024 as u64).unwrap();
+    let mmap = unsafe { memmap::MmapOptions::new().map_mut(&file).unwrap() };
+    let raw_offset = mmap.get(0).unwrap() as *const u8 as pptr;
     let mut a = BuddyAllocator::new();
+    let mut id = 0;
     let mut map: HashMap<String, (pptr, usize)> = HashMap::new();
     
-    a.init(1024);
     while let Some(cmd) = input(true, "Your choice: ") {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let "a" = &*cmd {
@@ -231,8 +288,7 @@ fn main() {
             } else if let "i" = &*cmd {
                 let len = input(false, "Size: ").expect("Wrong input");
                 let len: usize = len.parse().expect("Expected an integer");
-                a = BuddyAllocator::new();
-                a.init(len);
+                a.init(len, raw_offset);
                 map.clear();
             }
         }));
